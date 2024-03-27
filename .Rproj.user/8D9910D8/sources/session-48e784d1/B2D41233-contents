@@ -1,0 +1,11 @@
+Package: PoissonMixtureClustering
+Type: Package
+Title: Poisson Mixture Clustering based on EM algorithm
+Version: 0.1.0
+Author: Sarra SLIMI & Badia ALFATHI
+Description: This package provides functions for fitting Poisson mixture models based on EM algorithm to clustered data.
+Encoding: UTF-8
+LazyData: true
+VignetteBuilder: knitr
+Suggests:
+  rmarkdown

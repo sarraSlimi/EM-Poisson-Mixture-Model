@@ -1,0 +1,187 @@
+library(mclust)
+
+# Initialisation du modèle
+initialize_model <- function(num_clusters, num_features) {
+  model <- list(
+    num_clusters = num_clusters,
+    num_features = num_features,
+    cluster_probs = NULL,
+    cluster_lambdas = NULL,
+    log_likelihoods = NULL,
+    bic = NULL
+  )
+  return(model)
+}
+
+# Fonction e_step
+e_step <- function(model, X) {
+  poissons <- sapply(seq_len(model$num_clusters), function(cluster_idx) {
+    apply(X, 1, function(x) prod(dpois(x, model$cluster_lambdas[cluster_idx, ])))
+  })
+  if (ncol(poissons) != model$num_clusters) {
+    stop("Le nombre de colonnes de la matrice de poissons ne correspond pas au nombre de clusters dans le modèle.")
+  }
+  weighted_poissons <- model$cluster_probs * poissons
+  responsibilities <- weighted_poissons / rowSums(weighted_poissons)
+  return(responsibilities)
+}
+
+# Fonction m_step
+m_step <- function(model, X, responsibilities) {
+  Nk <- colSums(responsibilities)
+  model$cluster_probs <- Nk / sum(Nk)
+  new_cluster_centers <- matrix(0, nrow = model$num_clusters, ncol = model$num_features)
+  for (i in 1:model$num_clusters) {
+    new_cluster_centers[i, ] <- colSums(X * responsibilities[, i]) / Nk[i]
+  }
+  model$cluster_lambdas <- new_cluster_centers
+  return(model)
+}
+
+# Fonction log_likelihood
+log_likelihood <- function(model, X) {
+  poissons <- array(dim = c(dim(X), model$num_clusters))
+  for (cluster_idx in 1:model$num_clusters) {
+    poissons[, , cluster_idx] <- dpois(X, model$cluster_lambdas[cluster_idx])
+  }
+  weighted_poissons <- poissons * model$cluster_probs
+  likelihoods <- rowSums(weighted_poissons)
+  log_likelihood <- sum(log(likelihoods))
+  return(log_likelihood)
+}
+
+# Fonction calculate_bic
+calculate_bic <- function(model, X) {
+  n <- nrow(X)
+  k <- model$num_clusters * model$num_features
+  log_likelihood <- log_likelihood(model, X)
+  bic <- -2 * log_likelihood + k * log(n)
+  return(bic)
+}
+
+# Fonction fit
+fit <- function(X, num_clusters_range, max_iter = 100, tol = 1e-6) {
+  bics <- numeric(length(num_clusters_range))
+  models <- list()
+
+  for (i in seq_along(num_clusters_range)) {
+    # Initialize model for current number of clusters
+    model <- initialize_model(num_clusters_range[i], ncol(X))
+    model_result <- fit_model(model, X, max_iter, tol)
+    models[[i]] <- model_result$model
+    bics[i] <- model_result$bic
+  }
+
+  best_num_clusters <- which.min(bics)
+  best_model <- models[[best_num_clusters]]
+
+  return(list(best_num_clusters = best_num_clusters, best_model = best_model, bics = bics))
+}
+
+# Fonction predict
+predict <- function(model, X) {
+  responsibilities <- e_step(model, X)
+  return(apply(responsibilities, 1, which.max))
+}
+
+# Fonction fit_model
+fit_model <- function(model, X, max_iter, tol) {
+  # Initialization of parameters
+  model$cluster_probs <- rep(1 / model$num_clusters, model$num_clusters)
+  model$cluster_lambdas <- matrix(
+    runif(model$num_clusters * model$num_features,
+          min = apply(X, 2, min),
+          max = apply(X, 2, max)),
+    nrow = model$num_clusters,
+    ncol = model$num_features
+  )
+
+  # Vector to store log-likelihoods
+  log_likelihoods <- numeric(max_iter)
+
+  prev_log_likelihood <- -Inf
+  for (iter in 1:max_iter) {
+    responsibilities <- e_step(model, X)
+    model <- m_step(model, X, responsibilities)
+    log_likelihood <- log_likelihood(model, X)
+    log_likelihoods[iter] <- log_likelihood
+    if (abs(log_likelihood - prev_log_likelihood) < tol) {
+      break
+    }
+    prev_log_likelihood <- log_likelihood
+  }
+
+  # Calculate BIC after fitting
+  bic <- calculate_bic(model, X)
+
+  # Attach log-likelihoods to the model
+  model$log_likelihoods <- log_likelihoods[1:iter]
+
+  # Return the model along with the BIC value
+  return(list(model = model, bic = bic))
+}
+
+# Fonction fit_poisson_mixture
+fit_poisson_mixture <- function(X, num_clusters_range, max_iter = 100, tol = 1e-6) {
+  return(fit(X, num_clusters_range, max_iter, tol))
+}
+
+# Fonction plot_bic_vs_num_clusters
+plot_bic_vs_num_clusters <- function(num_clusters_range, bics) {
+  plot(num_clusters_range, bics, type = "b", xlab = "Number of Clusters", ylab = "BIC", main = "BIC vs. Number of Clusters")
+}
+
+# Plot clustered data
+plot_clustered_data <- function(X, model) {
+  predicted_clusters <- predict(model, X)
+  if (ncol(X) != 2) {
+    stop("plot_clustered_data only supports 2-dimensional data.")
+  }
+  num_clusters <- length(unique(predicted_clusters))
+  colors <- rainbow(num_clusters)
+  plot(X, col = colors[predicted_clusters], pch = 16, main = "Clustered Data", xlab = "Feature 1", ylab = "Feature 2")
+  legend("topright", legend = 1:num_clusters, col = colors, pch = 16, title = "Cluster")
+}
+
+
+
+# Générer les données
+set.seed(500)
+n_samples <- 1000
+n_clusters <- 4
+cluster_centers <- matrix(c(1, 1, 50, 50, 100, 100,200,200), ncol = 2, byrow = TRUE)
+X <- rbind(mapply(rpois, n_samples/n_clusters, as.data.frame(cluster_centers)))
+
+num_clusters_range = 1:10
+fit_result <- fit_poisson_mixture(X, num_clusters_range)
+best_num_clusters <- fit_result$best_num_clusters
+best_model <- fit_result$best_model
+print(best_num_clusters)
+print(best_model)
+
+
+
+# Usage
+plot_clustered_data(X, best_model)
+
+# Afficher la courbe de BIC en fonction du nombre de clusters
+plot_bic_vs_num_clusters(num_clusters_range, fit_result$bics)
+
+# Afficher les valeurs de BIC pour chaque nombre de clusters testé
+print(data.frame(Number_of_Clusters = num_clusters_range, BIC_Values = fit_result$bics))
+
+# Afficher les informations supplémentaires
+print("Cluster numbers of each individual:")
+cluster_numbers <- predict(best_model, X)
+print(cluster_numbers)
+
+print("Probabilities of belonging to each cluster for each individual:")
+cluster_probabilities <- e_step(best_model, X)
+print(cluster_probabilities)
+
+print("Number of clusters selected:")
+print(best_num_clusters)
+print("Cluster probabilities:")
+print(best_model$cluster_probs)
+print("Cluster lambdas:")
+print(best_model$cluster_lambdas)
